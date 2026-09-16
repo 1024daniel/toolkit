@@ -1,0 +1,57 @@
+{
+  "models": [
+    {
+      "name": "DeepSeek-V4-Pro",
+      "path": "/spiritx/nfs_data/models/deepseek-ai/DeepSeek-V4-Pro-0813/main",
+      "serve_args": [
+        "--tokenizer-mode", "deepseek_v4",
+        "--tool-call-parser", "deepseek_v4",
+        "--enable-auto-tool-choice",
+        "--reasoning-parser", "deepseek_v4"
+      ]
+    }
+  ],
+  "strategies": [
+    {"name": "tp8pp1ep8", "tp": 8, "pp": 1, "dp": 1, "ep": true},
+    {"name": "tp4pp2ep4", "tp": 4, "pp": 2, "dp": 1, "ep": true},
+    {"name": "tp2pp4ep2", "tp": 2, "pp": 4, "dp": 1, "ep": true},
+    {"name": "tp1pp8ep1", "tp": 1, "pp": 8, "dp": 1, "ep": true},
+    {"name": "tp8", "tp": 8, "pp": 1, "dp": 1, "ep": false},
+    {"name": "tp4pp2", "tp": 4, "pp": 2, "dp": 1, "ep": false},
+    {"name": "tp2pp4", "tp": 2, "pp": 4, "dp": 1, "ep": false},
+    {"name": "pp8", "tp": 1, "pp": 8, "dp": 1, "ep": false}
+  ],
+  "workloads": [[4096, 1024]],
+  "concurrencies": [1, 2, 4, 8, 16, 32, 64, 128, 256],
+  "serve_args": [
+    "--kv-cache-dtype", "fp8",
+    "--block-size", "256",
+    "--max-model-len", "20000",
+    "--gpu-memory-utilization", "0.9",
+    "--max-num-seqs", "256",
+    "--max-num-batched-tokens", "16384",
+    "--no-enable-flashinfer-autotune",
+    "--compilation-config", "{\"mode\": 0, \"cudagraph_mode\": \"FULL_DECODE_ONLY\"}",
+    "--no-enable-prefix-caching"
+  ],
+  "env": {},
+  "output_dir": "./offhand_runs",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "startup_timeout": 1800,
+    "shutdown_timeout": 120,
+    "health_interval": 2,
+    "health_timeout": 5,
+    "ready_successes": 2,
+    "health_failure_threshold": 3,
+    "settle_seconds": 5
+  },
+  "benchmark": {
+    "request_rate": "inf",
+    "prompts_multiplier": 1,
+    "case_timeout": 3600,
+    "continue_on_error": true
+  },
+  "continue_on_error": true
+}
