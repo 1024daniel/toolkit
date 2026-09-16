@@ -169,7 +169,19 @@ GROUP_LOG=./flash_tp4pp2_all.log \
 bash /path/to/offhand/batch.sh
 ```
 
+## FAQ
+
+### 为什么每个 case 都要为 `vllm bench serve` 单独生成 `--seed`？
+
+主要是为了减少服务端未关闭 prefix caching 时，重复输入命中前缀缓存而导致吞吐虚高的影响。`vllm bench serve` 的默认 seed 为 `0`；当前脚本使用 `--dataset-name random`，固定 seed 会使随机数据可复现，因此对同一服务反复压测时，可能复用之前留在 prefix cache 中的 prompt。官方文档将这种影响称为 “inflate throughput”。
+
+`batch.sh` 在每个 case 开始时，通过 `secrets.randbits(32)` 生成一个 32 位随机整数并传给 `--seed`，以降低不同 case 之间因固定 seed 重复生成输入、复用缓存的风险。更换 seed 不等于关闭 prefix caching，也不能保证完全没有缓存命中；同一次压测中的共享前缀仍可能命中缓存。
+
+参考 [vLLM v0.29.0 Benchmark CLI 的 prefix cache 提醒](https://github.com/vllm-project/vllm/blob/v0.29.0/docs/benchmarking/cli.md#L104-L111)。链接固定到编写本条 FAQ 时的最新 release（2026-09-16 核对），避免 `main` 后续更新导致对应说明变化或移除。
+
 ## 依赖与验证
+
+本压测流程已在 **vLLM 0.29.0** 上测试通过。
 
 运行环境：Linux（使用 `/proc` 跟踪进程）、Python 3.9+ 标准库、Bash 4+、`nohup` / `tee` 等 GNU 工具，以及已安装相应 vLLM 的 `uv` 环境。调度器只负责本机进程生命周期；远程节点、外部 Ray 集群、模型显存容量和具体模型对策略的支持需由实际部署提供。
 
