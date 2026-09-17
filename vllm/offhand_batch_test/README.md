@@ -118,6 +118,8 @@ offhand_runs/<本次运行时间与PID>/
 
 `group.log` 中 `[server]` 和 `[bench]` 标识来源；包含单 case 的参数、完整命令、输出及结果判定。case 文件名中的模型与策略名称会清理路径分隔符等字符，并各截取前 64 字符。
 
+配置中的 `env` 按“公共 → 模型 → 策略”合并后，启动日志会在命令前以 JSON 记录这些变量的实际值。调度日志中的 `server environment` / `bench environment` 表示传给对应脚本的环境；`server.log` 中的 `Server environment` 表示 `start.sh` 清理通信变量后的环境，每个 case 日志中的 `Environment` 表示压测环境，这些输出也会汇总到 `group.log`。已清除的变量显示为 `null`，空字符串保留为 `""`；仅记录配置中指定的变量，值中的换行等字符会转义。
+
 ### 每组自动归档 CSV
 
 调度器在服务和压测进程清理完成、日志输出全部写入后，同步执行：

@@ -85,6 +85,9 @@ if [[ "$START_USE_DEFAULT_ARGS" == 1 ]]; then
         --no-enable-prefix-caching)
 fi
 COMMAND+=("$@")
+if [[ -n "${OFFHAND_CONFIG_ENV_KEYS:-}" ]]; then
+    python3 "$(dirname -- "${BASH_SOURCE[0]}")/log_environment.py" 'Server environment' || exit 1
+fi
 printf 'Server command: '
 printf '%q ' "${COMMAND[@]}"
 printf '\n'

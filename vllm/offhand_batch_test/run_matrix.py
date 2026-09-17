@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 
 from export_data import archive_filename, topology_label
+from log_environment import CONFIG_ENV_KEYS, format_environment
 
 
 HERE = Path(__file__).resolve().parent
@@ -267,7 +268,9 @@ class Supervisor:
         except (OSError, ValueError, KeyError, TypeError, AttributeError, urllib.error.URLError):
             return False
 
-    def launch(self, command, env, label, extra_log=None):
+    def launch(self, command, env, label, extra_log=None, *, config_env=()):
+        if config_env:
+            self.log(f"{label} environment: {format_environment(env, config_env)}")
         self.log(f"{label} command: {shlex.join(command)}")
         proc = subprocess.Popen(command, cwd=self.c["work_dir"], env=env,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -404,12 +407,14 @@ class Supervisor:
         result = dict(group=name, model=model["name"], strategy=strategy["name"],
                       started_at=timestamp(), state="failed", directory=str(folder))
         self.save_state(current_group=name, phase="starting")
-        env = os.environ | self.c["env"] | model["env"] | strategy["env"]
+        config_env = self.c["env"] | model["env"] | strategy["env"]
+        env = os.environ | config_env
         env.update(MODEL=model["path"], MODEL_NAME=model["name"],
                    TP=str(strategy["tp"]), PP=str(strategy["pp"]), DP=str(strategy["dp"]),
                    EP=str(strategy["ep"]).lower(), HOST=self.c["server"]["host"],
                    PORT=str(self.c["server"]["port"]), START_USE_DEFAULT_ARGS="0",
                    PYTHONUNBUFFERED="1")
+        env[CONFIG_ENV_KEYS] = json.dumps(sorted(config_env))
         fatal = None
         with (folder / "group.log").open("a", buffering=1) as group_log, \
                 (folder / "server.log").open("a", buffering=1) as server_log:
@@ -420,7 +425,7 @@ class Supervisor:
                 self.log(f"Starting group {name}")
                 command = ["bash", str(HERE / "start.sh"), "--foreground"]
                 command += self.c["serve_args"] + model["serve_args"] + strategy["serve_args"]
-                server = self.launch(command, env, "server", server_log)
+                server = self.launch(command, env, "server", server_log, config_env=config_env)
                 self.save_state(server_pid=server.pid)
                 self.wait_ready(server, model["name"])
                 self.save_state(phase="benchmarking")
@@ -434,7 +439,8 @@ class Supervisor:
                            PROMPTS_MULTIPLIER=str(b["prompts_multiplier"]),
                            CASE_TIMEOUT=str(b["case_timeout"]),
                            CONTINUE_ON_ERROR=str(int(b["continue_on_error"])))
-                bench = self.launch(["bash", str(HERE / "batch.sh")], env, "bench")
+                bench = self.launch(["bash", str(HERE / "batch.sh")], env, "bench",
+                                    config_env=config_env)
                 self.save_state(benchmark_pid=bench.pid)
                 failures = 0
                 next_health = time.monotonic()

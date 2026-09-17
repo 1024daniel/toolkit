@@ -44,6 +44,11 @@ def arg(name, default=None):
 
 def event(kind, **fields):
     fields.update(kind=kind, pid=os.getpid(), time=time.monotonic())
+    if kind in {"start", "case"} and os.environ.get("OFFHAND_TEST_CAPTURE_KEYS"):
+        fields["environment"] = {
+            name: os.environ.get(name)
+            for name in json.loads(os.environ["OFFHAND_TEST_CAPTURE_KEYS"])
+        }
     with open(os.environ["FAKE_EVENTS"], "a", encoding="utf-8") as output:
         output.write(json.dumps(fields) + "\n")
 
@@ -299,6 +304,96 @@ class MatrixIntegrationTests(unittest.TestCase):
         for row in self.csv_rows(group):
             self.assertEqual(row["EP_ENABLED"], "1")
             self.assertEqual(row["EP_SIZE"], "4")
+
+    def test_configured_environment_logs_match_launched_processes(self):
+        self.config["concurrencies"] = [1]
+        self.env.pop("RESET_COMM_ENV", None)
+        inherited_name = "OFFHAND_TEST_INHERITED_ONLY"
+        self.env[inherited_name] = "inherited-value-not-for-logs"
+        self.config["env"].update({
+            "OFFHAND_TEST_GLOBAL": "global-only",
+            "OFFHAND_TEST_MODEL": "global",
+            "OFFHAND_TEST_OVERRIDE": "global",
+            "OFFHAND_TEST_EMPTY": "",
+            "OFFHAND_TEST_LITERAL": "spaces 'single' \"double\" $(literal) `literal`\\path\nFAILURE: literal",
+            "NCCL_P2P_DISABLE": "1",
+            "VLLM_ALLREDUCE_USE_FLASHINFER": "1",
+            "MODEL": "configured-global-model",
+        })
+        model = self.config["models"][0]
+        model["env"] = {
+            "OFFHAND_TEST_MODEL": "model",
+            "OFFHAND_TEST_OVERRIDE": "model",
+            "MODEL": "configured-model-model",
+        }
+        for strategy in self.config["strategies"]:
+            strategy["env"] = {
+                "OFFHAND_TEST_OVERRIDE": strategy["name"],
+                "MODEL": "configured-strategy-model",
+            }
+        self.config["strategies"][1]["env"]["RESET_COMM_ENV"] = "0"
+        configured_keys = set(self.config["env"]) | set(model["env"])
+        for strategy in self.config["strategies"]:
+            configured_keys.update(strategy["env"])
+        self.env["OFFHAND_TEST_CAPTURE_KEYS"] = json.dumps(
+            sorted(configured_keys | {inherited_name}))
+
+        result = self.cli("run")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.status()["state"], "completed")
+        starts = [event for event in self.events() if event["kind"] == "start"]
+        cases = [event for event in self.events() if event["kind"] == "case"]
+        groups = sorted(self.run_dir.glob("*/group.log"))
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(len(groups), 2)
+
+        def environment(log, label):
+            payloads = [line.partition(label)[2] for line in log.splitlines() if label in line]
+            self.assertEqual(len(payloads), 1, log)
+            return json.loads(payloads[0])
+
+        for strategy, start, case, group_path in zip(
+                self.config["strategies"], starts, cases, groups):
+            with self.subTest(strategy=strategy["name"]):
+                configured = self.config["env"] | model["env"] | strategy["env"]
+                server_launch = configured | {"MODEL": model["path"]}
+                server_actual = dict(server_launch)
+                if configured.get("RESET_COMM_ENV", "1") == "1":
+                    server_actual.update(NCCL_P2P_DISABLE=None,
+                                         VLLM_ALLREDUCE_USE_FLASHINFER=None)
+                bench_actual = configured | {"MODEL": model["name"]}
+                group_log = group_path.read_text()
+                server_log = (group_path.parent / "server.log").read_text()
+                case_paths = list((group_path.parent / "cases").glob("*.log"))
+                self.assertEqual(len(case_paths), 1)
+                case_log = case_paths[0].read_text()
+
+                self.assertEqual(environment(group_log, "server environment: "), server_launch)
+                self.assertEqual(environment(group_log, "bench environment: "), bench_actual)
+                self.assertEqual(environment(group_log, "Server environment: "), server_actual)
+                self.assertEqual(environment(server_log, "Server environment: "), server_actual)
+                self.assertEqual(environment(group_log, "Environment: "), bench_actual)
+                self.assertEqual(environment(case_log, "Environment: "), bench_actual)
+                self.assertLess(group_log.index("server environment: "),
+                                group_log.index("server command: "))
+                self.assertLess(group_log.index("bench environment: "),
+                                group_log.index("bench command: "))
+                self.assertLess(server_log.index("Server environment: "),
+                                server_log.index("Server command: "))
+                self.assertLess(case_log.index("Environment: "), case_log.index("Command: "))
+
+                for event, expected in ((start, server_actual), (case, bench_actual)):
+                    self.assertEqual({name: event["environment"][name] for name in configured},
+                                     expected)
+                    self.assertEqual(event["environment"][inherited_name], self.env[inherited_name])
+                for log in (result.stdout, group_log, server_log, case_log):
+                    self.assertNotIn(inherited_name, log)
+                    self.assertNotIn(self.env[inherited_name], log)
+                    self.assertNotIn("OFFHAND_TEST_CAPTURE_KEYS", log)
+                # A literal newline in an env value must not create benchmark metadata.
+                self.assertEqual(self.csv_rows(group_path.parent)[0]["状态"], "completed")
+        self.assert_processes_stopped()
 
     def test_all_cases_share_server_and_groups_are_serial(self):
         self.config["models"].append({"name": "model-b", "path": "/fake/models second/main"})

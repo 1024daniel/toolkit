@@ -145,6 +145,9 @@ run_case() {
         --result-dir "$RESULT_DIR"
         --result-filename "$result_file"
         "${EXTRA_ARGS[@]}")
+    if [[ -n "${OFFHAND_CONFIG_ENV_KEYS:-}" ]]; then
+        python3 "$(dirname -- "${BASH_SOURCE[0]}")/log_environment.py" 'Environment' || return 1
+    fi
     printf 'Command: '
     printf '%q ' "${command[@]}"
     printf '\n'
